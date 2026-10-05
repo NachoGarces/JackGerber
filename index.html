@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JackGerber</title>
+  <link href="https://unpkg.com/snes.css@latest/dist/snes.min.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+</head>
+
+<body>
+  <header class="head">
+    <h1>Gerber → SVG</h1>
+    <p>Creado por JackJackzZ</p>
+  </header>
+
+  <main class="layout main-container">
+    <form class="panel controls" onsubmit="return false">
+      <div class="scroll">
+        <section class="snes-container opt--sunshine">
+          <h2 class="snes-container-title has-sunshine-underline">Guía KiCad</h2>
+          <details>
+            <summary>¿Cómo exportar desde KiCad?</summary>
+            <h3>1. Gerbers: Archivo → Trazar</h3>
+            <dl class="guide">
+              <dt>Formato de trazado</dt>
+              <dd>Gerber.</dd>
+              <dt>Capas</dt>
+              <dd>Marca F_Cu o B_Cu, F_Mask o B_Mask y F.Silkscreen o F_Fab. Desmarca el resto.</dd>
+              <dt>Trazar valores de footprints</dt>
+              <dd>Desactivar.</dd>
+              <dt>Forzar texto invisible</dt>
+              <dd>Desactivar.</dd>
+              <dt>Extensiones Protel</dt>
+              <dd>Desactivar.</dd>
+              <dt>Formato X2 extendido</dt>
+              <dd>Desactivar.</dd>
+              <dt>Atributos de net</dt>
+              <dd>Desactivar.</dd>
+              <dt>Archivo de trabajo Gerber</dt>
+              <dd>Desactivar.</dd>
+              <dt>Verificar relleno de zonas</dt>
+              <dd>Activar.</dd>
+              <dt>Formato de coordenadas</dt>
+              <dd>4.6, mm.</dd>
+              <dt>Origen</dt>
+              <dd>Usa el mismo en Gerbers y taladros.</dd>
+              <dt>Botón Trazar</dt>
+              <dd>Pulsa y se crea un archivo por capa.</dd>
+            </dl>
+            <h3>2. Taladros: botón "Generar archivos de taladrado"</h3>
+            <dl class="guide">
+              <dt>Formato</dt>
+              <dd>Excellon.</dd>
+              <dt>Unidades</dt>
+              <dd>mm.</dd>
+              <dt>Formato de ceros</dt>
+              <dd><b>Formato decimal</b> (obligatorio para leerlo bien).</dd>
+              <dt>Espejo del eje Y</dt>
+              <dd><b>Desactivar</b>.</dd>
+              <dt>Mapa de taladros</dt>
+              <dd>Ninguno.</dd>
+              <dt>PTH y NPTH en un solo archivo</dt>
+              <dd><b>Activar</b>.</dd>
+              <dt>Origen</dt>
+              <dd>El mismo que usaste en Trazar.</dd>
+              <dt>Botón</dt>
+              <dd>Generar archivo de taladrado.</dd>
+            </dl>
+            <h3>3. Qué archivo subir en cada casilla</h3>
+            <dl class="guide">
+              <dt>Casilla 1: Cobre</dt>
+              <dd><code>proyecto-F_Cu.gbr</code> (cara inferior: <code>B_Cu</code>).</dd>
+              <dt>Casilla 2: Pads</dt>
+              <dd><code>proyecto-F_Mask.gbr</code> (o <code>F_Paste</code>).</dd>
+              <dt>Casilla 3: Serigrafía</dt>
+              <dd><code>proyecto-F_Silkscreen.gbr</code> (KiCad antiguo: <code>F_SilkS</code>).</dd>
+              <dt>Casilla 4: Taladros</dt>
+              <dd><code>proyecto-PTH.drl</code> (o el único <code>.drl</code> si lo juntaste).</dd>
+              <dt>No se usan</dt>
+              <dd><code>Edge_Cuts</code>, <code>B_Mask</code>, <code>.gbrjob</code> y demás.</dd>
+            </dl>
+          </details>
+        </section>
+
+<!-- COBRE -->
+        <section class="snes-container opt--ember">
+          <h2 class="snes-container-title has-ember-underline">Cobre</h2>
+          <p class="hint">Ej: <code>_Cu.gbr / _Cu.gbr</code></p>
+          <p class="filebox">
+            <label class="pick snes-button snes-btn has-ember-color">Seleccionar<input type="file" id="cobre"
+                hidden></label>
+            <output class="fn" id="cobre-n" for="cobre">Ningún archivo</output>
+          </p>
+          <h4>¿Cobre en negativo?</h4>
+          <fieldset class="choice snes-radio has-ember-icons" aria-describedby="neg-h">
+            <legend class="sr-only">¿Cobre en negativo?</legend>
+            <label class="snes-radio__item"><input type="radio" name="neg" id="negYes" checked><span
+                class="snes-radio__item__content">Sí</span></label>
+            <label class="snes-radio__item"><input type="radio" name="neg" id="negNo"><span
+                class="snes-radio__item__content">No</span></label>
+          </fieldset>
+        </section>
+
+<!-- PADS -->
+        <section class="snes-container opt--ocean">
+          <h2 class="snes-container-title has-ocean-underline">Pads</h2>
+          <p class="hint">Ej: _Mask.gbr / _Paste.gbr</p>
+          <p class="filebox">
+            <label class="pick snes-button snes-btn has-ocean-color">Seleccionar<input type="file" id="pads"
+                hidden></label>
+            <output class="fn" id="pads-n" for="pads">Ningún archivo</output>
+          </p>
+        </section>
+
+<!-- SERIGRAFIA -->
+        <section class="snes-container opt--nature">
+          <h2 class="snes-container-title has-nature-underline">Serigrafía</h2>
+          <p class="hint">Ej: _Silkscreen.gbr / _Fab.grb</p>
+          <p class="filebox">
+            <label class="pick snes-button snes-btn has-nature-color">Seleccionar<input type="file" id="silk"
+                hidden></label>
+            <output class="fn" id="silk-n" for="silk">Ningún archivo</output>
+          </p>
+          <p class="snes-checkbox has-nature-icons"><label class="snes-checkbox__item"><input type="checkbox"
+                id="mirrorSilk"><span class="snes-checkbox__item__content">Modo espejo</span></label></p>
+        </section>
+
+<!-- TALADROS -->
+        <div class="snes-container opt--plumber">
+          <h2 class="snes-container-title has-plumber-underline">Taladros</h2>
+          <p class="hint">Ej: PTH.drl</p>
+          <p class="filebox">
+            <label class="pick snes-button snes-btn has-plumber-color">Seleccionar<input type="file" id="drill"
+                hidden></label>
+            <output class="fn" id="drill-n" for="drill">Ningún archivo</output>
+          </p>
+          <h4>¿Unir perforaciones al cobre y pads?</h4>
+          <fieldset class="choice snes-radio has-plumber-icons" aria-describedby="merge-h">
+            <legend class="sr-only">¿Unir taladros al cobre y pads?</legend>
+            <label class="snes-radio__item"><input type="radio" name="merge" id="mergeNo" checked><span
+                class="snes-radio__item__content">No</span></label>
+            <label class="snes-radio__item"><input type="radio" name="merge" id="mergeYes"><span
+                class="snes-radio__item__content">Sí</span></label>
+          </fieldset>
+        </div>
+
+<!-- MODO ESPEJO -->
+        <section class="snes-container opt--galaxy">
+          <p class="hint">Voltea horizontalmente todas las capas.</p>
+          <p class="snes-checkbox has-galaxy-icons"><label class="snes-checkbox__item"><input type="checkbox"
+                id="mirror"><span class="snes-checkbox__item__content">Espejo total</span></label></p>
+        </section>
+
+      </div>
+
+<!-- BOTONES -->
+      <footer class="actions">
+        <p id="err" role="alert"></p>
+        <button id="go" type="button" class="snes-button snes-btn has-nature-color">Generar</button>
+        <a id="dl" class="snes-button snes-btn has-sunshine-color" download="placa_laser.svg">Descargar</a>
+      </footer>
+    </form>
+
+<!-- VISTA PREVIA -->
+    <section class="snes-container panel prev-panel opt--phantom">
+      <h2>Vista previa</h2>
+      <figure id="prev">
+        <div id="stage">
+          <p class="empty">Aquí aparecerá el resultado.</p>
+        </div>
+      </figure>
+      <menu class="zoombar" aria-label="Controles de zoom">
+        <li><button id="zin" type="button" class="snes-button snes-btn has-nature-color" aria-label="Acercar">+</button>
+        </li>
+        <li><button id="zout" type="button" class="snes-button snes-btn has-plumber-color"
+            aria-label="Alejar">-</button></li>
+        <li><button id="zfit" type="button" class="snes-button snes-btn has-ocean-color">Ajustar</button></li>
+      </menu>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
+  <script src="script.js"></script>
+</body>
+
+</html>
