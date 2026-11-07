@@ -127,11 +127,16 @@ body {
 }
 
 #dl {
-  display: none
+  display: none;
+  margin: 2.5px
 }
 
-#go{
-  margin: 5px
+#go {
+  margin: 2.5px
+}
+
+#clr {
+  margin: 2.5px
 }
 
 /* Tarjetas de opciones */
@@ -345,4 +350,47 @@ details h3 {
   #prev {
     min-height: 55vh
   }
+}
+
+/* Selector de programa: solo se ve el contenido del programa elegido */
+body[data-sw="kicad"] [data-sw]:not([data-sw="kicad"]),
+body[data-sw="easyeda"] [data-sw]:not([data-sw="easyeda"]),
+body[data-sw="proteus"] [data-sw]:not([data-sw="proteus"]) {
+  display: none
+}
+
+.snes-input {
+  margin: 6px 0 12px
+}
+
+/* Programa de diseño: KiCad y EasyEDA en la primera fila, Proteus centrado debajo */
+.sw-choice {
+  flex-wrap: wrap
+}
+
+.sw-choice .snes-radio__item:last-child {
+  flex: 0 0 100%;
+  justify-content: center
+}
+
+/* Guía: enlaces a imágenes */
+.links {
+  margin: 8px 0 0;
+  padding-left: 20px
+}
+
+.links li {
+  margin: 6px 0
+}
+
+#logo-pelao {
+  width: 80px;
+  position: relative;
+  margin-bottom: -40px;
+  z-index: 1
+}
+
+#aj-logo {
+  display: flex;
+  justify-content: space-between;
 }

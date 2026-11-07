@@ -5,15 +5,23 @@ const TY = (T, y) => T ? T.y1 - y : y;
 
 /* ---------- Parser Gerber RS-274X ---------- */
 function parseGerber(text, T) {
-    let xd = 4, yd = 4, u = 1, ap = {}, cur = null, x = 0, y = 0, mode = 1;
+    let xd = 4, yd = 4, xi = 3, yi = 3, tz = false, clr = false, hasClear = false, u = 1, ap = {}, cur = null, x = 0, y = 0, mode = 1;
     let reg = false, pen = false, open = false, ld = 2, rp = '', path = '', gp = null;
     const fills = [], strokes = {}, macros = {}, geo = { polys: [], lines: [] }, bb = [1e9, 1e9, -1e9, -1e9];
+    const steps = [];                                   // pasos de polaridad: oscuro (LPD) / claro (LPC)
+    const startStep = c => { const t = { c, polys: [], lines: [] }; steps.push(t); geo.polys = t.polys; geo.lines = t.lines; };
+    startStep(false);
     const box = (px, py, r) => {
         bb[0] = Math.min(bb[0], px - r); bb[1] = Math.min(bb[1], py - r);
         bb[2] = Math.max(bb[2], px + r); bb[3] = Math.max(bb[3], py + r);
     };
     const px = a => TX(T, a), py = b => TY(T, b), P = (a, b) => f(px(a)) + ' ' + f(py(b));
-    const val = (s, d) => parseInt(s) / Math.pow(10, d) * u;
+    const val = (s, d, n) => {
+        let sg = 1;
+        if (s[0] === '-' || s[0] === '+') { if (s[0] === '-') sg = -1; s = s.slice(1); }
+        if (tz) s = s.padEnd(n + d, '0');               // ceros finales omitidos
+        return sg * parseInt(s) / Math.pow(10, d) * u;
+    };
     const flush = () => {
         if (path && cur) strokes[cur.w] = (strokes[cur.w] || '') + path;
         path = '';
@@ -98,7 +106,18 @@ function parseGerber(text, T) {
     const cmd = c => {
         c = c.trim(); if (!c) return;
         let m;
-        if (m = c.match(/^FSLAX\d(\d)Y\d(\d)/)) { xd = +m[1]; yd = +m[2]; return; }
+        if (m = c.match(/^FS([LT])?[AI]?X(\d)(\d)Y(\d)(\d)/)) { tz = m[1] === 'T'; xi = +m[2]; xd = +m[3]; yi = +m[4]; yd = +m[5]; return; }
+        if (m = c.match(/^LP([DC])/)) {
+            flush();
+            const c2 = m[1] === 'C';
+            if (c2) hasClear = true;
+            if (c2 !== clr) {
+                clr = c2;
+                const t = steps[steps.length - 1];
+                if (!t.polys.length && !t.lines.length) t.c = c2; else startStep(c2);
+            }
+            return;
+        }
         if (c === 'MOMM') { u = 1; return; }
         if (c === 'MOIN') { u = 25.4; return; }
         if (m = c.match(/^ADD(\d+)([A-Za-z]\w*),?(.*)$/)) {
@@ -109,14 +128,14 @@ function parseGerber(text, T) {
             ap[+m[1]] = { t, p, w: p[0] || 0.1 };
             return;
         }
-        m = c.match(/^(?:G(\d+))?(?:X(-?\d+))?(?:Y(-?\d+))?(?:I(-?\d+))?(?:J(-?\d+))?(?:D(\d+))?$/);
+        m = c.match(/^(?:G(\d+))?(?:X([+-]?\d+))?(?:Y([+-]?\d+))?(?:I([+-]?\d+))?(?:J([+-]?\d+))?(?:D(\d+))?$/);
         if (!m) return;
         const g = m[1] ? +m[1] : null;
         if (g === 1 || g === 2 || g === 3) mode = g;
         if (g === 36) { flush(); reg = true; rp = ''; open = false; pen = false; }
         if (g === 37) { if (open) rp += 'Z'; if (rp) fills.push(`<path d="${rp}"/>`); rp = ''; reg = false; open = false; pen = false; }
-        const nx = m[2] != null ? val(m[2], xd) : x, ny = m[3] != null ? val(m[3], yd) : y;
-        const i = m[4] != null ? val(m[4], xd) : 0, j = m[5] != null ? val(m[5], yd) : 0;
+        const nx = m[2] != null ? val(m[2], xd, xi) : x, ny = m[3] != null ? val(m[3], yd, yi) : y;
+        const i = m[4] != null ? val(m[4], xd, xi) : 0, j = m[5] != null ? val(m[5], yd, yi) : 0;
         let d = m[6] != null ? +m[6] : (m[2] != null || m[3] != null ? ld : null);
         if (d == null) return;
         if (d >= 10) { flush(); cur = ap[d]; pen = false; return; }
@@ -173,21 +192,34 @@ function parseGerber(text, T) {
         } else cmd(m[2]);
     }
     flush();
-    return { fills, strokes, bb, geo };
+    geo.steps = steps;
+    return { fills, strokes, bb, geo, hasClear };
 }
 
 /* ---------- Parser Excellon ---------- */
 function parseDrill(text, T) {
-    let u = 1, tools = {}, cur = null; const raw = [], geo = { polys: [] };
+    let u = 1, ints = 3, decs = 3, lz = false, tools = {}, cur = null; const raw = [], geo = { polys: [] };
     const bb = [1e9, 1e9, -1e9, -1e9];
-    const num = s => s.includes('.') ? parseFloat(s) * u : parseInt(s) / Math.pow(10, u === 1 ? 3 : 4);
+    const setUnit = inch => { u = inch ? 25.4 : 1; ints = inch ? 2 : 3; decs = inch ? 4 : 3; };
+    const num = s => {
+        if (s.includes('.')) return parseFloat(s) * u;
+        let sg = 1;
+        if (s[0] === '-' || s[0] === '+') { if (s[0] === '-') sg = -1; s = s.slice(1); }
+        if (lz) s = s.padEnd(ints + decs, '0');         // LZ: se conservan ceros iniciales, faltan los finales
+        return sg * parseInt(s) / Math.pow(10, decs) * u;
+    };
     for (let line of text.split(/\r?\n/)) {
         line = line.trim(); let m;
-        if (/^(INCH|M72)/.test(line)) u = 25.4;
-        else if (/^(METRIC|M71)/.test(line)) u = 1;
+        if (line === 'M48') { setUnit(false); lz = false; }
+        if (m = line.match(/FILE_FORMAT=(\d):(\d)/)) { ints = +m[1]; decs = +m[2]; }
+        if (m = line.match(/^(METRIC|INCH)(?:,(LZ|TZ))?(?:,(\d+)\.(\d+))?/)) {
+            setUnit(m[1] === 'INCH'); lz = m[2] === 'LZ';
+            if (m[3]) { ints = m[3].length; decs = m[4].length; }
+        } else if (/^M72/.test(line)) setUnit(true);
+        else if (/^M71/.test(line)) setUnit(false);
         if (m = line.match(/^T(\d+).*C([\d.]+)/)) tools[+m[1]] = +m[2] * u;
         else if (m = line.match(/^T(\d+)$/)) cur = +m[1];
-        else if ((m = line.match(/^X(-?[\d.]+)Y(-?[\d.]+)/)) && tools[cur]) {
+        else if ((m = line.match(/^X([+-]?[\d.]+)Y([+-]?[\d.]+)/)) && tools[cur]) {
             const X = num(m[1]), Y = num(m[2]), r = tools[cur] / 2;
             raw.push(`<circle cx="${f(TX(T, X))}" cy="${f(TY(T, Y))}" r="${f(r)}"/>`);
             const o = [];
@@ -205,7 +237,8 @@ const LAY = [
     ['cobre', 'GRABADO_cobre', '#000000', 0],
     ['pads', 'GRABADO_pads', '#0000ff', 0],
     ['silk', 'GRABADO_serigrafia', '#00a000', 0],
-    ['drill', 'CORTE_taladros', '#ff0000', 1]
+    ['drill', 'CORTE_taladros', '#ff0000', 1],
+    ['edge', 'CORTE_marco', '#ff00ff', 0]
 ];
 
 function layerBody(l) {
@@ -218,20 +251,11 @@ function layerBody(l) {
     return s;
 }
 
-function cuBody(geo, w, h, col, neg, holes) {
+function cuBody(geo, R, col, neg, holes) {
     if (typeof ClipperLib === 'undefined') throw E('No se pudo cargar la librería Clipper (revisa tu conexión).');
-    const C = ClipperLib, S = 1e4, NZ = C.PolyFillType.pftNonZero;
+    const C = ClipperLib, S = 1e4, NZ = C.PolyFillType.pftNonZero, CT = C.ClipType;
     const tp = r => r.map(p => ({ X: Math.round(p[0] * S), Y: Math.round(p[1] * S) }));
     const pos = r => { const p = tp(r); if (!C.Clipper.Orientation(p)) p.reverse(); return p; };
-    const subj = geo.polys.filter(r => r.length > 2).map(pos);
-    const byW = {};
-    geo.lines.forEach(l => { if (l.pts.length > 1) (byW[l.w] = byW[l.w] || []).push(tp(l.pts)); });
-    for (const k in byW) {
-        const co = new C.ClipperOffset(2, 0.002 * S), sol = new C.Paths();
-        co.AddPaths(byW[k], C.JoinType.jtRound, C.EndType.etOpenRound);
-        co.Execute(sol, +k / 2 * S);
-        sol.forEach(p => subj.push(p));              // los huecos del offset ya vienen orientados: no se tocan
-    }
     const run = (type, a, b) => {
         const c = new C.Clipper(), out = new C.Paths();
         a.forEach(p => c.AddPath(p, C.PolyType.ptSubject, true));
@@ -239,32 +263,82 @@ function cuBody(geo, w, h, col, neg, holes) {
         c.Execute(type, out, NZ, NZ);
         return out;
     };
-    let res = run(C.ClipType.ctUnion, subj, []);
-    if (holes && holes.length) res = run(C.ClipType.ctDifference, res, holes.map(pos));   // perforaciones reales
-    if (neg) res = run(C.ClipType.ctDifference, [tp([[0, 0], [w, 0], [w, h], [0, h]])], res);
+    const shapes = st => {
+        const subj = st.polys.filter(r => r.length > 2).map(pos);
+        const byW = {};
+        st.lines.forEach(l => { if (l.pts.length > 1) (byW[l.w] = byW[l.w] || []).push(tp(l.pts)); });
+        for (const k in byW) {
+            const co = new C.ClipperOffset(2, 0.002 * S), sol = new C.Paths();
+            co.AddPaths(byW[k], C.JoinType.jtRound, C.EndType.etOpenRound);
+            co.Execute(sol, +k / 2 * S);
+            sol.forEach(p => subj.push(p));          // los huecos del offset ya vienen orientados: no se tocan
+        }
+        return run(CT.ctUnion, subj, []);
+    };
+    const steps = geo.steps || [{ c: false, polys: geo.polys, lines: geo.lines }];
+    let res = new C.Paths();
+    for (const st of steps) {                         // LPD suma, LPC resta, en el orden del archivo
+        if (!st.polys.length && !st.lines.length) continue;
+        const sh = shapes(st);
+        res = st.c ? run(CT.ctDifference, res, sh) : run(CT.ctUnion, res.concat(sh), []);
+    }
+    if (holes && holes.length) res = run(CT.ctDifference, res, holes.map(pos));   // perforaciones reales
+    if (neg) res = run(CT.ctDifference, [tp([[R.x, R.y], [R.x + R.w, R.y], [R.x + R.w, R.y + R.h], [R.x, R.y + R.h]])], res);
     const path = res.map(p => 'M' + p.map(q => f(q.X / S) + ' ' + f(q.Y / S)).join('L') + 'Z').join('');
     return `<path d="${path}" fill="${col}" fill-rule="evenodd" stroke="none"/>`;
 }
 
-function buildSvg(L, mirror, silkMirror, neg, merge) {
-    const bb = [1e9, 1e9, -1e9, -1e9];
+/* Marco de corte: solo contorno (sin relleno). Sin archivo se dibuja el rectángulo de la placa. */
+function cutBody(l, bb) {
+    const st = `fill="none" stroke="${l.col}" stroke-width="0.1" stroke-linecap="round" stroke-linejoin="round"`;
+    if (l.auto) {
+        const xa = TX(l.T, bb[0]), xb = TX(l.T, bb[2]), y0 = TY(l.T, bb[3]), y1 = TY(l.T, bb[1]);
+        return `<path d="M${f(Math.min(xa, xb))} ${f(y0)}H${f(Math.max(xa, xb))}V${f(y1)}H${f(Math.min(xa, xb))}Z" ${st}/>`;
+    }
+    let s = '';
+    for (const k in l.g.strokes) s += `<path d="${l.g.strokes[k]}" ${st}/>`;
+    return s + l.g.fills.map(e => e.replace(/\/>$/, ' ' + st + '/>')).join('');
+}
+
+/* Lienzo: "Placa" (cobre, pads, taladros y marco de corte) pegada a la derecha, a 5 mm del borde derecho y del superior.
+   La serigrafía (con W = ancho del lienzo, 5 mm por lado) va a la izquierda, a 5 mm del borde izquierdo, y comparte
+   con la placa la misma referencia vertical: así, al dar vuelta la placa, todo queda alineado.
+   Cada espejo gira su conjunto horizontalmente sobre sí mismo, sin perder su lado. */
+function buildSvg(L, mirror, silkMirror, neg, merge, W) {
+    const M = 5, bb = [1e9, 1e9, -1e9, -1e9], sb = [1e9, 1e9, -1e9, -1e9];
+    const uni = (a, b) => { a[0] = Math.min(a[0], b[0]); a[1] = Math.min(a[1], b[1]); a[2] = Math.max(a[2], b[2]); a[3] = Math.max(a[3], b[3]); };
     L.forEach(l => {
+        if (l.auto) return;
         l.g = l.isD ? parseDrill(l.t) : parseGerber(l.t);
-        bb[0] = Math.min(bb[0], l.g.bb[0]); bb[1] = Math.min(bb[1], l.g.bb[1]);
-        bb[2] = Math.max(bb[2], l.g.bb[2]); bb[3] = Math.max(bb[3], l.g.bb[3]);
+        uni(l.k === 'silk' ? sb : bb, l.g.bb);
     });
     if (bb[0] > bb[2]) throw E('No se encontró geometría en los archivos.');
-    if (neg) { bb[0] -= 1; bb[1] -= 1; bb[2] += 1; bb[3] += 1; }   // margen de 1 mm alrededor del negativo
+    const sk = L.some(l => l.k === 'silk');
+    const bw = bb[2] - bb[0], bh = bb[3] - bb[1], sw = sb[2] - sb[0];
+    if (sk) {
+        if (sb[0] > sb[2]) throw E('No se encontró geometría en la serigrafía.');
+        if (!(W > 2 * M)) throw E('Indica el ancho de la PCB (mínimo 10 mm) para colocar la serigrafía.');
+        if (Math.max(bw, sw) > W - 2 * M + 1e-6) throw E(`El ancho indicado (${f(W)} mm) es menor que el necesario (${f(Math.max(bw, sw) + 2 * M)} mm).`);
+    }
+    const CW = sk ? W : bw + M, fr = CW - M;
+    const Yt = Math.max(bb[3], sk ? sb[3] : -1e9);       // referencia vertical común (arriba, a 5 mm)
+    const g = neg ? 1 : 0;                             // el negativo sobresale 1 mm de la placa, dentro del margen
     L.forEach(l => {
-        const T = { m: mirror !== (l.k === 'silk' && silkMirror), x0: bb[0], x1: bb[2], y1: bb[3] };
-        l.g = l.isD ? parseDrill(l.t, T) : parseGerber(l.t, T);
+        l.T = l.k === 'silk'
+            ? { m: silkMirror, x0: sb[0] - M, x1: sb[2] + M, y1: Yt + M }                     // lado izquierdo, misma altura que la placa
+            : { m: mirror, x0: bb[2] - fr, x1: fr + bb[0], y1: Yt + M };                      // lado derecho
+        if (!l.auto) l.g = l.isD ? parseDrill(l.t, l.T) : parseGerber(l.t, l.T);
     });
-    const w = f(bb[2] - bb[0]), h = f(bb[3] - bb[1]);
+    const w = f(CW), h = f(M + Yt - Math.min(bb[1] - g, sk ? sb[1] : 1e9));
     let s = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="${w}mm" height="${h}mm" viewBox="0 0 ${w} ${h}">`;
+    const cob = L.find(l => l.k === 'cobre');
+    const rx = Math.min(TX(cob.T, bb[0]), TX(cob.T, bb[2])), rx0 = Math.max(0, rx - g);
+    const R = { x: rx0, y: TY(cob.T, bb[3]) - g, w: rx + bw + g - rx0, h: bh + 2 * g };
     const dl = L.find(l => l.isD), holes = merge && dl ? dl.g.geo.polys : [];
     const body = l => {
-        const cu = l.k === 'cobre', mg = (cu || l.k === 'pads') && holes.length;
-        return (cu && neg) || mg ? cuBody(l.g.geo, +w, +h, l.col, cu && neg, mg ? holes : null) : layerBody(l);
+        if (l.k === 'edge') return cutBody(l, cob.g.bb);                 // marco = contorno del Gerber de cobre
+        const cu = l.k === 'cobre', mg = (cu || l.k === 'pads') && holes.length, clr = !l.isD && l.g.hasClear;
+        return (cu && neg) || mg || clr ? cuBody(l.g.geo, R, l.col, cu && neg, mg ? holes : null) : layerBody(l);
     };
     if (L.length === 1) s += body(L[0]);            // un solo archivo: SVG plano, sin capas
     else for (const l of L)
@@ -274,29 +348,74 @@ function buildSvg(L, mirror, silkMirror, neg, merge) {
 
 /* ---------- UI ---------- */
 const $ = id => document.getElementById(id);
+const SW = { kicad: 'KiCad', easyeda: 'EasyEDA', proteus: 'Proteus' };
+const sw = () => document.querySelector('input[name="sw"]:checked').value;
+document.body.dataset.sw = sw();
+document.querySelectorAll('input[name="sw"]').forEach(r => r.onchange = () => { document.body.dataset.sw = sw(); });
+
 $('go').onclick = async () => {
     $('err').textContent = ''; $('dl').style.display = 'none';
     try {
         const L = [];
         for (const [k, label, col, isD] of LAY) {
-            const file = $(k).files[0];
-            if (!file) { if (k === 'cobre') throw E('Falta el Gerber principal.'); continue; }
-            const t = await file.text();
+            if (k === 'edge') {                           // marco de corte: sin archivo, usa el contorno del cobre
+                if ($('edgeYes').checked) L.push({ k, label, col, isD, auto: true });
+                continue;
+            }
+            const files = [...$(k).files];
+            if (!files.length) { if (k === 'cobre') throw E('Falta el Gerber principal.'); continue; }
+            const t = (await Promise.all(files.map(fl => fl.text()))).join('\n');   // varios taladros (PTH, vías, NPTH) se unen
             L.push({ k, label, col, isD, t });
         }
-        if ($('mergeYes').checked && !$('drill').files[0]) throw E('Para unir los taladros sube el archivo de taladros.');
-        const svg = buildSvg(L, $('mirror').checked, $('mirrorSilk').checked, $('negYes').checked, $('mergeYes').checked);
+        if ($('mergeYes').checked && !$('drill').files.length) throw E('Para unir los taladros sube el archivo de taladros.');
+        const W = parseFloat($('pcbw').value) || 0;
+        const svg = buildSvg(L, $('mirror').checked, $('mirrorSilk').checked, $('negYes').checked, $('mergeYes').checked, W);
         $('stage').innerHTML = svg;
         fitView();
         $('dl').href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
         $('dl').style.display = 'inline-block';
     } catch (e) {
         console.error(e);
-        $('err').textContent = e.es ? e.message : 'No se pudo procesar el archivo. Revisa que sea un Gerber o Excellon válido exportado desde KiCad.';
+        $('err').textContent = e.es ? e.message : `No se pudo procesar el archivo. Revisa que sea un Gerber o Excellon válido exportado desde ${SW[sw()]}.`;
     }
 };
-['cobre', 'pads', 'silk', 'drill'].forEach(k => $(k).onchange = () =>
-    $(k + '-n').textContent = $(k).files[0] ? $(k).files[0].name : 'Ningún archivo');
+/* Persistencia: los archivos y las opciones se conservan (al descargar, al generar de nuevo y al recargar). */
+const idb = () => new Promise((ok, no) => {
+    const r = indexedDB.open('jackgerber', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('estado');
+    r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+});
+const guardar = async (k, v) => { try { (await idb()).transaction('estado', 'readwrite').objectStore('estado').put(v, k); } catch (_) { } };
+const leer = async k => {
+    try {
+        const d = await idb();
+        return await new Promise(ok => { const q = d.transaction('estado').objectStore('estado').get(k); q.onsuccess = () => ok(q.result); q.onerror = () => ok(undefined); });
+    } catch (_) { return undefined; }
+};
+const FK = ['cobre', 'pads', 'silk', 'drill'];
+const nombres = k => { const fl = [...$(k).files]; $(k + '-n').textContent = fl.length ? fl.map(x => x.name).join(', ') : 'Ningún archivo'; };
+const ctl = () => [...document.querySelectorAll('.controls input:not([type=file])')];
+const guardarOpc = () => guardar('opc', ctl().map(i => ({ c: i.checked, v: i.value })));
+FK.forEach(k => $(k).onchange = () => { nombres(k); guardar('f:' + k, [...$(k).files]); });
+document.querySelector('.controls').addEventListener('change', guardarOpc);
+$('pcbw').addEventListener('input', guardarOpc);
+(async () => {
+    for (const k of FK) {
+        const fl = await leer('f:' + k);
+        if (fl && fl.length && window.DataTransfer) {
+            const dt = new DataTransfer(); fl.forEach(x => dt.items.add(x));
+            $(k).files = dt.files; nombres(k);
+        }
+    }
+    const o = await leer('opc');
+    if (o) ctl().forEach((i, n) => { if (o[n]) { if (i.type === 'number') i.value = o[n].v; else i.checked = o[n].c; } });
+    document.body.dataset.sw = sw();
+})();
+$('clr').onclick = () => {
+    document.querySelector('.controls').reset();
+    FK.forEach(k => { guardar('f:' + k, []); nombres(k); });
+    guardarOpc(); $('err').textContent = ''; document.body.dataset.sw = sw();
+};
 const vp = $('prev'), st = $('stage'), ptrs = new Map();
 let sc = 1, tx = 0, ty = 0, pd = 0;
 function apply() {
